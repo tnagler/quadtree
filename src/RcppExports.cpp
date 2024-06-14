@@ -11,55 +11,23 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// rcppeigen_hello_world
-Eigen::MatrixXd rcppeigen_hello_world();
-RcppExport SEXP _quadtree_rcppeigen_hello_world() {
+// test
+Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query, int n_samples, int depth);
+RcppExport SEXP _quadtree_test(SEXP pointsSEXP, SEXP querySEXP, SEXP n_samplesSEXP, SEXP depthSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    rcpp_result_gen = Rcpp::wrap(rcppeigen_hello_world());
-    return rcpp_result_gen;
-END_RCPP
-}
-// rcppeigen_outerproduct
-Eigen::MatrixXd rcppeigen_outerproduct(const Eigen::VectorXd& x);
-RcppExport SEXP _quadtree_rcppeigen_outerproduct(SEXP xSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcppeigen_outerproduct(x));
-    return rcpp_result_gen;
-END_RCPP
-}
-// rcppeigen_innerproduct
-double rcppeigen_innerproduct(const Eigen::VectorXd& x);
-RcppExport SEXP _quadtree_rcppeigen_innerproduct(SEXP xSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcppeigen_innerproduct(x));
-    return rcpp_result_gen;
-END_RCPP
-}
-// rcppeigen_bothproducts
-Rcpp::List rcppeigen_bothproducts(const Eigen::VectorXd& x);
-RcppExport SEXP _quadtree_rcppeigen_bothproducts(SEXP xSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const Eigen::VectorXd& >::type x(xSEXP);
-    rcpp_result_gen = Rcpp::wrap(rcppeigen_bothproducts(x));
+    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type points(pointsSEXP);
+    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type query(querySEXP);
+    Rcpp::traits::input_parameter< int >::type n_samples(n_samplesSEXP);
+    Rcpp::traits::input_parameter< int >::type depth(depthSEXP);
+    rcpp_result_gen = Rcpp::wrap(test(points, query, n_samples, depth));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_quadtree_rcppeigen_hello_world", (DL_FUNC) &_quadtree_rcppeigen_hello_world, 0},
-    {"_quadtree_rcppeigen_outerproduct", (DL_FUNC) &_quadtree_rcppeigen_outerproduct, 1},
-    {"_quadtree_rcppeigen_innerproduct", (DL_FUNC) &_quadtree_rcppeigen_innerproduct, 1},
-    {"_quadtree_rcppeigen_bothproducts", (DL_FUNC) &_quadtree_rcppeigen_bothproducts, 1},
+    {"_quadtree_test", (DL_FUNC) &_quadtree_test, 4},
     {NULL, NULL, 0}
 };
 

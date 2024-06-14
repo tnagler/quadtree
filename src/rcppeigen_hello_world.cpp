@@ -1,56 +1,250 @@
-// -*- mode: C++; c-indent-level: 4; c-basic-offset: 4; indent-tabs-mode: nil; -*-
-
-// we only include RcppEigen.h which pulls Rcpp.h in for us
 #include <RcppEigen.h>
+#include <iostream>
+#include <vector>
+#include <memory>
+#include <random>
+#include <unordered_map>
+#include <array>
 
-// via the depends attribute we tell Rcpp to create hooks for
-// RcppEigen so that the build process will know what to do
-//
 // [[Rcpp::depends(RcppEigen)]]
 
-// simple example of creating two matrices and
-// returning the result of an operation on them
-//
-// via the exports attribute we tell Rcpp to make this function
-// available from R
-//
-// [[Rcpp::export]]
-Eigen::MatrixXd rcppeigen_hello_world() {
-    Eigen::MatrixXd m1 = Eigen::MatrixXd::Identity(3, 3);
-    // Eigen::MatrixXd m2 = Eigen::MatrixXd::Random(3, 3);
-    // Do not use Random() here to not promote use of a non-R RNG
-    Eigen::MatrixXd m2 = Eigen::MatrixXd::Zero(3, 3);
-    for (auto i=0; i<m2.rows(); i++)
-        for (auto j=0; j<m2.cols(); j++)
-            m2(i,j) = R::rnorm(0, 1);
 
-    return m1 + 3 * (m1 + m2);
+
+struct Point {
+  double x, y;
+};
+
+// A set of points with O(1) insert, remove, and uniform sampling;
+// inspired by https://gist.github.com/matovitch/1c262d2d870024ca0b81
+class PointSet
+{
+public:
+  size_t size() { return vector_.size(); }
+
+  void insert(const Point& p)
+  {
+    if (ptr_set_.find(&p) == ptr_set_.end()) {  // point not already in the set
+      vector_.push_back(p);
+      ptr_set_.insert(&(*vector_.crbegin()));
+    }
+  }
+
+  void remove(const Point& p)
+  {
+    auto el = ptr_set_.find(&p);
+    if (el != ptr_set_.end()) {
+      // first replace element by last entry of vector_, then pop last entry
+      if (*el != &(*vector_.crbegin())) {
+        *(const_cast<Point*>(*el)) = *vector_.rbegin();
+      }
+      vector_.pop_back();
+    }
+  }
+
+  const Point& sample() const
+  {
+    auto n = vector_.size();
+    if (n == 0) {
+      throw std::runtime_error("Cannot sample from empty set.");
+    }
+    std::mt19937 rng(std::random_device{}());
+    auto distribution = std::uniform_int_distribution<std::size_t>(0, n - 1);
+    return vector_[distribution(rng) % vector_.size()];
+  }
+
+private:
+  std::unordered_set<const Point*> ptr_set_;
+  std::vector<Point> vector_;
+};
+
+
+struct BoundingBox {
+  double x_min, y_min, x_mid, y_mid, x_max, y_max;
+
+  BoundingBox(double x_min, double y_min, double x_max, double y_max)
+    : x_min(x_min), y_min(y_min), x_max(x_max), y_max(y_max),
+      x_mid(0.5 * (x_min + x_max)), y_mid(0.5 * (y_min + y_max))
+  {}
+
+  bool contains(const BoundingBox& other) const {
+    return other.x_min >= x_min && other.x_max <= x_max &&
+      other.y_min >= y_min && other.y_max <= y_max;
+  }
+
+  bool intersects(const BoundingBox& other) const {
+    return !(other.x_min > x_max || other.x_max < x_min ||
+             other.y_min > y_max || other.y_max < y_min);
+  }
+};
+
+// Fixed depth quadtree class
+class Quadtree {
+private:
+  struct Node {
+    BoundingBox boundary;
+    PointSet points;
+
+    std::array<Node*, 4> children;
+    Node(const BoundingBox& boundary) : boundary(boundary) {}
+  };
+
+  void construct_children(Node* node, uint16_t depth, int& node_idx) {
+    if (depth >= depth_) return;
+
+    const auto& b = node->boundary;
+    nodes_.emplace_back(BoundingBox{b.x_min, b.y_min, b.x_mid, b.y_mid});
+    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_min, b.x_max, b.y_mid});
+    nodes_.emplace_back(BoundingBox{b.x_min, b.y_mid, b.x_mid, b.y_max});
+    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_mid, b.x_max, b.y_max});
+
+    for (int i = 0; i < 4; ++i) {
+      node->children[i] = &nodes_[node_idx++];
+      auto c = node->children[i];
+    }
+
+    for (auto& child : node->children) {
+      construct_children(child, depth + 1, node_idx);
+    }
+  }
+
+  Node* find_child_with_point(const Node* node, const Point& point)
+  {
+    if (point.x <= node->boundary.x_mid && point.y <= node->boundary.y_mid) {
+      return node->children[0];
+    } else if (point.y <= node->boundary.y_mid) {
+      return node->children[1];
+    } else if (point.x <= node->boundary.x_mid) {
+      return node->children[2];
+    } else {
+      return node->children[3];
+    }
+  }
+
+  std::vector<Node> nodes_;
+  std::vector<Node*> terminal_nodes_;
+  uint16_t depth_;
+
+public:
+  Quadtree(const BoundingBox& boundary, int depth)
+    : depth_(depth)
+  {
+    // geometric series sum formula 4^0 + 4^1 + ... + 4^depth
+    size_t num_nodes = (std::pow(4, depth + 1) - 1) / 3;
+    nodes_.reserve(num_nodes);
+    terminal_nodes_.reserve(num_nodes);
+
+    nodes_.emplace_back(boundary);
+    int node_idx = 1;
+    construct_children(&nodes_[0], 0, node_idx);
+  }
+
+  void insert(const Point& point)
+  {
+    Node* node = &nodes_[0]; // start at root
+    for (int d = 0; d <= depth_; ++d) {
+      node->points.insert(point);
+      node = find_child_with_point(node, point);
+    }
+  }
+
+  void remove(const Point& point) {
+    Node* node = &nodes_[0]; // start at root
+    for (int d = 0; d <= depth_; ++d) {
+      node->points.remove(point);
+      node = find_child_with_point(node, point);
+    }
+  }
+
+  // Helper function to recursively calculate points within the range
+  void find_terminal_nodes(Node* node, const BoundingBox& range, int depth)
+  {
+    if (depth == 0) {
+      terminal_nodes_.clear(); // starting new search
+    }
+
+    // If the node is outside the range, no points are within the range
+    if (!range.intersects(node->boundary)) {
+      return;
+    }
+
+    // If the node is fully contained in the range, all its points are
+    // If at deepest level, return the node even though it only intersects
+    if (range.contains(node->boundary) || (depth == depth_)) {
+      terminal_nodes_.push_back(node);
+      return;
+    }
+
+    // Otherwise, check each child node
+    for (auto& child : node->children) {
+      find_terminal_nodes(child, range, depth + 1);
+    }
+
+  };
+
+  Point sample(const BoundingBox& range) {
+    // Find nodes at highest possible level fully contained in the range,
+    // starting at root
+    find_terminal_nodes(&nodes_[0], range, 0);
+
+    int total_points_in_range = 0;
+    for (auto node : terminal_nodes_) {
+      auto c = node;
+      total_points_in_range += node->points.size();
+    }
+    if (total_points_in_range == 0) {
+      throw std::runtime_error("No points in the specified range.");
+    }
+
+    // Select a child node based on the counts
+    std::uniform_int_distribution<int> dist(0, total_points_in_range - 1);
+    std::mt19937 rng(std::random_device{}());
+    int r = dist(rng);
+
+    Node* sampled_node;
+    for (auto node : terminal_nodes_) {
+      if (r < node->points.size()) {
+        sampled_node = node;
+        break;
+      }
+      r -= node->points.size();
+    }
+
+    return sampled_node->points.sample();
+  }
+};
+
+
+
+// [[Rcpp::export]]
+Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query,
+                     int n_samples = 100, int depth = 5) {
+  Quadtree quadtree(BoundingBox{0.0, 0.0, 1.0, 1.0}, depth);
+
+  // Insert points from the Eigen matrix into the quadtree
+  for (int i = 0; i < points.rows(); ++i) {
+    quadtree.insert(Point{points(i, 0), points(i, 1)});
+  }
+
+  // Define a query bounding box
+  BoundingBox query_box{
+    query(0, 0), query(0, 1),
+    query(1, 0), query(1, 1)
+  };
+
+  Eigen::MatrixXd samples(n_samples, 2);
+  samples.setZero();
+
+  for (int i = 0; i < n_samples; ++i) {
+    Point sampled_point = quadtree.sample(query_box);
+    samples(i, 0) = sampled_point.x;
+    samples(i, 1) = sampled_point.y;
+
+    // quadtree.remove(Point{points(i, 0), points(i, 1)});
+    auto new_point = Point{0.2, 0.2};
+    quadtree.insert(new_point);
+  }
+
+  return samples;
 }
 
 
-// another simple example: outer product of a vector,
-// returning a matrix
-//
-// [[Rcpp::export]]
-Eigen::MatrixXd rcppeigen_outerproduct(const Eigen::VectorXd & x) {
-    Eigen::MatrixXd m = x * x.transpose();
-    return m;
-}
-
-// and the inner product returns a scalar
-//
-// [[Rcpp::export]]
-double rcppeigen_innerproduct(const Eigen::VectorXd & x) {
-    double v = x.transpose() * x;
-    return v;
-}
-
-// and we can use Rcpp::List to return both at the same time
-//
-// [[Rcpp::export]]
-Rcpp::List rcppeigen_bothproducts(const Eigen::VectorXd & x) {
-    Eigen::MatrixXd op = x * x.transpose();
-    double          ip = x.transpose() * x;
-    return Rcpp::List::create(Rcpp::Named("outer")=op,
-                              Rcpp::Named("inner")=ip);
-}

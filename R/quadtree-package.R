@@ -7,3 +7,4 @@ NULL
 #' @useDynLib quadtree, .registration = TRUE
 ## usethis namespace: end
 NULL
+
