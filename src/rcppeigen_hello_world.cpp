@@ -9,7 +9,6 @@
 // [[Rcpp::depends(RcppEigen)]]
 
 
-
 struct Point {
   double x, y;
 };
@@ -25,7 +24,11 @@ public:
   {
     if (ptr_set_.find(&p) == ptr_set_.end()) {  // point not already in the set
       vector_.push_back(p);
-      ptr_set_.insert(&(*vector_.crbegin()));
+      if (ptr_set_.find(&(*(vector_.cbegin()))) != ptr_set_.end()) {
+        ptr_set_.insert(&(*vector_.crbegin()));
+      } else {
+        enlarge();
+      }
     }
   }
 
@@ -38,21 +41,32 @@ public:
         *(const_cast<Point*>(*el)) = *vector_.rbegin();
       }
       vector_.pop_back();
+    } else {
+      throw std::runtime_error("Cannot remove point that's not yet in the tree.");
     }
   }
 
-  const Point& sample() const
+  const Point& pop_random(std::mt19937* rng_ptr_)
   {
     auto n = vector_.size();
     if (n == 0) {
       throw std::runtime_error("Cannot sample from empty set.");
     }
-    std::mt19937 rng(std::random_device{}());
+
     auto distribution = std::uniform_int_distribution<std::size_t>(0, n - 1);
-    return vector_[distribution(rng) % vector_.size()];
+
+    auto& sample = vector_[distribution(*rng_ptr_) % vector_.size()];
+    remove(sample);
+    return sample;
   }
 
 private:
+  void enlarge() {
+    ptr_set_.clear();
+    ptr_set_.reserve(vector_.capacity());
+    for (auto& p : vector_) ptr_set_.insert(&p);
+  }
+
   std::unordered_set<const Point*> ptr_set_;
   std::vector<Point> vector_;
 };
@@ -78,24 +92,27 @@ struct BoundingBox {
 };
 
 // Fixed depth quadtree class
-class Quadtree {
+class QuadTree {
 private:
   struct Node {
     BoundingBox boundary;
     PointSet points;
+    size_t point_count = 0;
+    Node* parent_ptr = nullptr;
 
     std::array<Node*, 4> children;
-    Node(const BoundingBox& boundary) : boundary(boundary) {}
+    Node(const BoundingBox& boundary, Node* parent_ptr = nullptr) :
+      boundary(boundary), parent_ptr(parent_ptr) {}
   };
 
   void construct_children(Node* node, uint16_t depth, int& node_idx) {
     if (depth >= depth_) return;
 
     const auto& b = node->boundary;
-    nodes_.emplace_back(BoundingBox{b.x_min, b.y_min, b.x_mid, b.y_mid});
-    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_min, b.x_max, b.y_mid});
-    nodes_.emplace_back(BoundingBox{b.x_min, b.y_mid, b.x_mid, b.y_max});
-    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_mid, b.x_max, b.y_max});
+    nodes_.emplace_back(BoundingBox{b.x_min, b.y_min, b.x_mid, b.y_mid}, node);
+    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_min, b.x_max, b.y_mid}, node);
+    nodes_.emplace_back(BoundingBox{b.x_min, b.y_mid, b.x_mid, b.y_max}, node);
+    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_mid, b.x_max, b.y_max}, node);
 
     for (int i = 0; i < 4; ++i) {
       node->children[i] = &nodes_[node_idx++];
@@ -123,9 +140,10 @@ private:
   std::vector<Node> nodes_;
   std::vector<Node*> terminal_nodes_;
   uint16_t depth_;
+  std::mt19937 rng_;
 
 public:
-  Quadtree(const BoundingBox& boundary, int depth)
+  QuadTree(const BoundingBox& boundary, int depth, std::vector<int> seeds = {})
     : depth_(depth)
   {
     // geometric series sum formula 4^0 + 4^1 + ... + 4^depth
@@ -136,23 +154,30 @@ public:
     nodes_.emplace_back(boundary);
     int node_idx = 1;
     construct_children(&nodes_[0], 0, node_idx);
+
+    auto seq = std::seed_seq(seeds.begin(), seeds.end());
+    rng_ = std::mt19937(seq);
   }
 
   void insert(const Point& point)
   {
     Node* node = &nodes_[0]; // start at root
-    for (int d = 0; d <= depth_; ++d) {
-      node->points.insert(point);
+    node->point_count++;
+    for (int d = 1; d <= depth_; ++d) {
       node = find_child_with_point(node, point);
+      node->point_count++;
     }
+    node->points.insert(point);
   }
 
   void remove(const Point& point) {
     Node* node = &nodes_[0]; // start at root
-    for (int d = 0; d <= depth_; ++d) {
-      node->points.remove(point);
+    node->point_count--;
+    for (int d = 1; d <= depth_; ++d) {
       node = find_child_with_point(node, point);
+      node->point_count--;
     }
+    node->points.remove(point);
   }
 
   // Helper function to recursively calculate points within the range
@@ -168,9 +193,12 @@ public:
     }
 
     // If the node is fully contained in the range, all its points are
-    // If at deepest level, return the node even though it only intersects
-    if (range.contains(node->boundary) || (depth == depth_)) {
+    if (range.contains(node->boundary) || depth == depth_) {
       terminal_nodes_.push_back(node);
+      return;
+    }
+
+    if (depth == depth_) {
       return;
     }
 
@@ -181,7 +209,7 @@ public:
 
   };
 
-  Point sample(const BoundingBox& range) {
+  Point pop_random(const BoundingBox& range) {
     // Find nodes at highest possible level fully contained in the range,
     // starting at root
     find_terminal_nodes(&nodes_[0], range, 0);
@@ -189,36 +217,58 @@ public:
     int total_points_in_range = 0;
     for (auto node : terminal_nodes_) {
       auto c = node;
-      total_points_in_range += node->points.size();
+      total_points_in_range += node->point_count;
     }
     if (total_points_in_range == 0) {
       throw std::runtime_error("No points in the specified range.");
     }
 
-    // Select a child node based on the counts
     std::uniform_int_distribution<int> dist(0, total_points_in_range - 1);
-    std::mt19937 rng(std::random_device{}());
-    int r = dist(rng);
+    int r = dist(rng_);
 
     Node* sampled_node;
-    for (auto node : terminal_nodes_) {
-      if (r < node->points.size()) {
+    for (auto& node : terminal_nodes_) {
+      if (r < node->point_count) {
         sampled_node = node;
         break;
       }
-      r -= node->points.size();
+      r -= node->point_count;
     }
 
-    return sampled_node->points.sample();
-  }
-};
+    while (sampled_node->points.size() == 0) {
+      size_t total_child_count = 0;
+      for (auto& child : sampled_node->children) {
+        total_child_count += child->point_count;
+      }
+      std::uniform_int_distribution<int> dist(0, total_child_count - 1);
+      r = dist(rng_);
 
+      for (auto& child : sampled_node->children) {
+        if (r < child->point_count) {
+          sampled_node = child;
+          break;
+        }
+        r -= child->point_count;
+      }
+
+    }
+
+    auto parent_ptr = sampled_node;
+    while (parent_ptr != nullptr) {
+      parent_ptr->point_count--;
+      parent_ptr = parent_ptr->parent_ptr;
+    }
+
+    return sampled_node->points.pop_random(&rng_);
+  };
+
+};
 
 
 // [[Rcpp::export]]
 Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query,
                      int n_samples = 100, int depth = 5) {
-  Quadtree quadtree(BoundingBox{0.0, 0.0, 1.0, 1.0}, depth);
+  QuadTree quadtree(BoundingBox{0.0, 0.0, 1.0, 1.0}, depth);
 
   // Insert points from the Eigen matrix into the quadtree
   for (int i = 0; i < points.rows(); ++i) {
@@ -235,11 +285,10 @@ Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query
   samples.setZero();
 
   for (int i = 0; i < n_samples; ++i) {
-    Point sampled_point = quadtree.sample(query_box);
+    Point sampled_point = quadtree.pop_random(query_box);
     samples(i, 0) = sampled_point.x;
     samples(i, 1) = sampled_point.y;
 
-    // quadtree.remove(Point{points(i, 0), points(i, 1)});
     auto new_point = Point{0.2, 0.2};
     quadtree.insert(new_point);
   }
