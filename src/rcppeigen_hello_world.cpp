@@ -11,6 +11,15 @@
 
 struct Point {
   double x, y;
+  size_t index;
+  bool operator==(const Point& other) const {
+    return x == other.x && y == other.y && index == other.index;
+  }
+};
+
+struct PointID {
+  Point* ptr;
+  size_t index;
 };
 
 // A set of points with O(1) insert, remove, and uniform sampling;
@@ -22,31 +31,37 @@ public:
 
   void insert(const Point& p)
   {
-    if (ptr_set_.find(&p) == ptr_set_.end()) {  // point not already in the set
-      vector_.push_back(p);
-      if (ptr_set_.find(&(*(vector_.cbegin()))) != ptr_set_.end()) {
-        ptr_set_.insert(&(*vector_.crbegin()));
-      } else {
-        enlarge();
+    if (vector_.size() == vector_.capacity()) {
+      vector_.reserve(vector_.size() * 2);
+      set_.clear();
+      for (auto& point : vector_) {
+        set_.insert(PointID{&point, point.index});
       }
     }
+    vector_.push_back(p);
+    set_.insert(PointID{&vector_.back(), p.index});
   }
 
   void remove(const Point& p)
   {
-    auto el = ptr_set_.find(&p);
-    if (el != ptr_set_.end()) {
-      // first replace element by last entry of vector_, then pop last entry
-      if (*el != &(*vector_.crbegin())) {
-        *(const_cast<Point*>(*el)) = *vector_.rbegin();
-      }
-      vector_.pop_back();
-    } else {
+    auto el = set_.lower_bound(PointID{nullptr, p.index});
+    if (el->index != p.index) {
       throw std::runtime_error("Cannot remove point that's not yet in the tree.");
     }
+
+    auto last = set_.lower_bound(PointID{nullptr, vector_.back().index});
+    if (el->index != last->index) {
+      auto new_id = PointID{el->ptr, last->index};
+      *el->ptr = vector_.back();
+      set_.erase(last);
+      set_.insert(new_id);
+    }
+
+    vector_.pop_back();
+    set_.erase(el);
   }
 
-  const Point& pop_random(std::mt19937* rng_ptr_)
+  const Point& sample(std::mt19937* rng_ptr_)
   {
     auto n = vector_.size();
     if (n == 0) {
@@ -54,20 +69,17 @@ public:
     }
 
     auto distribution = std::uniform_int_distribution<std::size_t>(0, n - 1);
-
-    auto& sample = vector_[distribution(*rng_ptr_) % vector_.size()];
-    remove(sample);
-    return sample;
+    return vector_[distribution(*rng_ptr_) % vector_.size()];
   }
 
 private:
-  void enlarge() {
-    ptr_set_.clear();
-    ptr_set_.reserve(vector_.capacity());
-    for (auto& p : vector_) ptr_set_.insert(&p);
-  }
+  struct IndexCompare {
+    bool operator()(const PointID& a, const PointID& b) const {
+      return a.index < b.index;
+    }
+  };
 
-  std::unordered_set<const Point*> ptr_set_;
+  std::set<PointID, IndexCompare> set_;
   std::vector<Point> vector_;
 };
 
@@ -209,7 +221,7 @@ public:
 
   };
 
-  Point pop_random(const BoundingBox& range) {
+  Point sample(const BoundingBox& range) {
     // Find nodes at highest possible level fully contained in the range,
     // starting at root
     find_terminal_nodes(&nodes_[0], range, 0);
@@ -250,16 +262,9 @@ public:
         }
         r -= child->point_count;
       }
-
     }
 
-    auto parent_ptr = sampled_node;
-    while (parent_ptr != nullptr) {
-      parent_ptr->point_count--;
-      parent_ptr = parent_ptr->parent_ptr;
-    }
-
-    return sampled_node->points.pop_random(&rng_);
+    return sampled_node->points.sample(&rng_);
   };
 
 };
@@ -271,8 +276,8 @@ Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query
   QuadTree quadtree(BoundingBox{0.0, 0.0, 1.0, 1.0}, depth);
 
   // Insert points from the Eigen matrix into the quadtree
-  for (int i = 0; i < points.rows(); ++i) {
-    quadtree.insert(Point{points(i, 0), points(i, 1)});
+  for (size_t i = 0; i < points.rows(); ++i) {
+    quadtree.insert(Point{points(i, 0), points(i, 1), i});
   }
 
   // Define a query bounding box
@@ -281,15 +286,19 @@ Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query
     query(1, 0), query(1, 1)
   };
 
-  Eigen::MatrixXd samples(n_samples, 2);
-  samples.setZero();
+  Eigen::MatrixXd samples = points;
 
-  for (int i = 0; i < n_samples; ++i) {
-    Point sampled_point = quadtree.pop_random(query_box);
+  for (size_t i = 0; i < samples.rows(); ++i) {
+    Point sampled_point = quadtree.sample(query_box);
+
+    Point old_point{samples(i, 0), samples(i, 1), i};
+    quadtree.remove(old_point);
+
     samples(i, 0) = sampled_point.x;
     samples(i, 1) = sampled_point.y;
 
-    auto new_point = Point{0.2, 0.2};
+
+    auto new_point = Point{0.2, 0.2, i};
     quadtree.insert(new_point);
   }
 
