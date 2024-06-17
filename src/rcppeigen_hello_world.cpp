@@ -110,25 +110,22 @@ private:
     BoundingBox boundary;
     PointSet points;
     size_t point_count = 0;
-    Node* parent_ptr = nullptr;
 
     std::array<Node*, 4> children;
-    Node(const BoundingBox& boundary, Node* parent_ptr = nullptr) :
-      boundary(boundary), parent_ptr(parent_ptr) {}
+    Node(const BoundingBox& boundary) : boundary(boundary) {}
   };
 
   void construct_children(Node* node, uint16_t depth, int& node_idx) {
     if (depth >= depth_) return;
 
     const auto& b = node->boundary;
-    nodes_.emplace_back(BoundingBox{b.x_min, b.y_min, b.x_mid, b.y_mid}, node);
-    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_min, b.x_max, b.y_mid}, node);
-    nodes_.emplace_back(BoundingBox{b.x_min, b.y_mid, b.x_mid, b.y_max}, node);
-    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_mid, b.x_max, b.y_max}, node);
+    nodes_.emplace_back(BoundingBox{b.x_min, b.y_min, b.x_mid, b.y_mid});
+    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_min, b.x_max, b.y_mid});
+    nodes_.emplace_back(BoundingBox{b.x_min, b.y_mid, b.x_mid, b.y_max});
+    nodes_.emplace_back(BoundingBox{b.x_mid, b.y_mid, b.x_max, b.y_max});
 
     for (int i = 0; i < 4; ++i) {
       node->children[i] = &nodes_[node_idx++];
-      auto c = node->children[i];
     }
 
     for (auto& child : node->children) {
@@ -210,9 +207,6 @@ public:
       return;
     }
 
-    if (depth == depth_) {
-      return;
-    }
 
     // Otherwise, check each child node
     for (auto& child : node->children) {
@@ -269,10 +263,199 @@ public:
 
 };
 
+struct BoundingBox2 {
+  double x_min, y_min, x_max, y_max;
+
+  static constexpr uint16_t splits = 4;
+
+  BoundingBox2(double x_min, double y_min, double x_max, double y_max)
+    : x_min(x_min), y_min(y_min), x_max(x_max), y_max(y_max)
+  {}
+
+  bool contains(const BoundingBox2& other) const {
+    return other.x_min >= x_min && other.x_max <= x_max &&
+      other.y_min >= y_min && other.y_max <= y_max;
+  }
+
+  bool intersects(const BoundingBox2& other) const {
+    return !(other.x_min > x_max || other.x_max < x_min ||
+             other.y_min > y_max || other.y_max < y_min);
+  }
+};
+
+
+// Fixed depth quadtree class
+class RangeTree {
+private:
+  static constexpr int K_ = 4;
+
+  struct Node {
+    BoundingBox2 boundary;
+    PointSet points;
+    size_t point_count = 0;
+
+    std::array<Node*, K_> children;
+    Node(const BoundingBox2& boundary) : boundary(boundary) {}
+  };
+
+  void build_tree(Node* node, int depth, size_t& node_idx) {
+
+    if (depth == 2 * depth_) return;
+
+    int dim = depth % 2; // 0 for x-coordinate, 1 for y-coordinate
+    auto& nb = node->boundary;
+    if (dim == 0) {
+      auto sz = (nb.x_max - nb.x_min) / K_;
+      for (int i = 0; i < K_; i++) {
+        nodes_.emplace_back(BoundingBox2{nb.x_min + i * sz, nb.y_min, nb.x_min + (i + 1) * sz, nb.y_max});
+      }
+
+    } else {
+      auto sz = (nb.y_max - nb.y_min) / K_;
+      for (int i = 0; i < K_; i++) {
+        nodes_.emplace_back(BoundingBox2{nb.x_min, nb.y_min + i * sz, nb.x_max, nb.y_min + (i + 1) * sz});
+      }
+    }
+
+    for (auto& child : node->children) {
+      child = &nodes_[++node_idx];
+
+    }
+    for (auto& child : node->children) {
+      build_tree(child, depth + 1, node_idx);
+    }
+  }
+
+
+  Node* find_child_with_point(const Node* node, const Point& point, int depth)
+  {
+    int dim = depth % 2; // 0 for x-coordinate, 1 for y-coordinate
+    auto& b = node->boundary;
+    int i;
+    if (dim == 0) {
+      i = std::floor((point.x - b.x_min) / (b.x_max - b.x_min) * K_);
+    } else {
+      i = std::floor((point.y - b.y_min) / (b.y_max - b.y_min) * K_);
+    }
+    return node->children[std::min(i, K_ - 1)];
+  }
+
+  std::vector<Node> nodes_;
+  std::vector<Node*> terminal_nodes_;
+  uint16_t depth_;
+  std::mt19937 rng_;
+
+public:
+  RangeTree(const BoundingBox2& boundary, int depth,  std::vector<int> seeds = {})
+    : depth_(depth)
+  {
+    size_t num_nodes = std::pow(K_, 2 * depth + 1) - 1;
+    nodes_.reserve(num_nodes);
+    terminal_nodes_.reserve(num_nodes);
+
+    nodes_.emplace_back(boundary);
+    size_t node_idx = 0;
+    build_tree(&nodes_[0], 0, node_idx);
+
+    auto seq = std::seed_seq(seeds.begin(), seeds.end());
+    rng_ = std::mt19937(seq);
+  }
+
+  void insert(const Point& point)
+  {
+    Node* node = &nodes_[0]; // start at root
+    node->point_count++;
+    for (int d = 0; d < 2 * depth_; d++) {
+      node = find_child_with_point(node, point, d);
+      node->point_count++;
+    }
+    node->points.insert(point);
+  }
+
+  void remove(const Point& point) {
+    Node* node = &nodes_[0]; // start at root
+    node->point_count--;
+    for (int d = 0; d < 2 * depth_; d++) {
+      node = find_child_with_point(node, point, d);
+      node->point_count--;
+    }
+    node->points.remove(point);
+  }
+
+  // Helper function to recursively calculate points within the range
+  void find_terminal_nodes(const BoundingBox2& range)
+  {
+    terminal_nodes_.clear(); // starting new search
+    find_terminal_nodes_(&nodes_[0], range, 0);
+  };
+
+  // Helper function to recursively calculate points within the range
+  void find_terminal_nodes_(Node* node, const BoundingBox2& range, int depth)
+  {
+    // If the node is outside the range, no points are within the range
+    if (!range.intersects(node->boundary)) {
+      return;
+    }
+
+    // If the node is fully contained in the range, all its points are
+    if (range.contains(node->boundary) || depth == depth_) {
+      terminal_nodes_.push_back(node);
+      return;
+    }
+
+    // Otherwise, check child nodes
+    for (auto& child : node->children) {
+      find_terminal_nodes_(child, range, depth + 1);
+    }
+  };
+
+  Point sample(const BoundingBox2& range) {
+    // Find nodes at highest possible level fully contained in the range,
+    // starting at root
+    find_terminal_nodes(range);
+
+    int total_points_in_range = 0;
+    for (auto node : terminal_nodes_) {
+      total_points_in_range += node->point_count;
+    }
+    if (total_points_in_range == 0) {
+      throw std::runtime_error("No points in the specified range.");
+    }
+
+    std::uniform_int_distribution<int> dist(0, total_points_in_range - 1);
+    int r = dist(rng_);
+
+    Node* sampled_node;
+    for (auto& node : terminal_nodes_) {
+      if (r < node->point_count) {
+        sampled_node = node;
+        break;
+      }
+      r -= node->point_count;
+    }
+
+    while (sampled_node->points.size() == 0) {
+      dist = std::uniform_int_distribution<int>(0, sampled_node->point_count - 1);
+      r = dist(rng_);
+      for (auto& child : sampled_node->children) {
+        if (r < child->point_count) {
+          sampled_node = child;
+          break;
+        }
+        r -= child->point_count;
+      }
+    }
+
+    return sampled_node->points.sample(&rng_);
+  };
+
+};
+
+
 
 // [[Rcpp::export]]
 Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query,
-                     int n_samples = 100, int depth = 5) {
+                     int depth = 5) {
   QuadTree quadtree(BoundingBox{0.0, 0.0, 1.0, 1.0}, depth);
 
   // Insert points from the Eigen matrix into the quadtree
@@ -300,6 +483,43 @@ Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query
 
     auto new_point = Point{0.2, 0.2, i};
     quadtree.insert(new_point);
+  }
+
+  return samples;
+}
+
+
+// [[Rcpp::export]]
+Eigen::MatrixXd test_range(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query,
+                           int depth = 5) {
+  RangeTree rangetree(BoundingBox2{0.0, 0.0, 1.0, 1.0}, depth);
+  Eigen::MatrixXd samples = points;
+// rangetree.insert(Point{0.2, 0.2, 0});
+
+  // Insert points from the Eigen matrix into the quadtree
+  for (size_t i = 0; i < points.rows(); ++i) {
+    rangetree.insert(Point{points(i, 0), points(i, 1), i});
+  }
+
+  // Define a query bounding box
+  BoundingBox2 query_box{
+    query(0, 0), query(0, 1),
+    query(1, 0), query(1, 1)
+  };
+
+
+  for (size_t i = 0; i < samples.rows(); ++i) {
+
+    Point old_point{samples(i, 0), samples(i, 1), i};
+    rangetree.remove(old_point);
+
+    Point sampled_point = rangetree.sample(query_box);
+    // Point sampled_point = old_point;
+    samples(i, 0) = sampled_point.x;
+    samples(i, 1) = sampled_point.y;
+
+    auto new_point = Point{0.2, 0.2, i};
+    rangetree.insert(new_point);
   }
 
   return samples;
