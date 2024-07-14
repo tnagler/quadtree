@@ -9,6 +9,7 @@
 // [[Rcpp::depends(RcppEigen)]]
 
 
+
 struct Point {
   double x, y;
   size_t index;
@@ -169,12 +170,13 @@ public:
     for (int d = 1; d <= depth_; ++d) {
       node = find_child_with_point(node, point, 0);
       node->point_count++;
+      auto y_node = node;
+      for (int k = 1; k <= depth_; ++k) {
+        y_node = find_child_with_point(y_node, point, 1);
+        y_node->point_count++;
+      }
+      y_node->points.insert(point);
     }
-    for (int d = 1; d <= depth_; ++d) {
-      node = find_child_with_point(node, point, 1);
-      node->point_count++;
-    }
-    node->points.insert(point);
   }
 
   void remove(const Point& point) {
@@ -183,12 +185,13 @@ public:
     for (int d = 1; d <= depth_; ++d) {
       node = find_child_with_point(node, point, 0);
       node->point_count--;
+      auto y_node = node;
+      for (int k = 1; k <= depth_; ++k) {
+        y_node = find_child_with_point(y_node, point, 1);
+        y_node->point_count--;
+      }
+      y_node->points.remove(point);
     }
-    for (int d = 1; d <= depth_; ++d) {
-      node = find_child_with_point(node, point, 1);
-      node->point_count--;
-    }
-    node->points.remove(point);
   }
 
   // Helper function to recursively calculate points within the range
@@ -207,7 +210,7 @@ public:
     }
 
     // If the node is fully contained in the range, all its points are
-    if (range.contains(node->boundary) || (!node->down_child && !node->left_child)) {
+    if (range.contains(node->boundary) || !node->left_child) {
       terminal_nodes_.push_back(node);
       return;
     }
@@ -215,9 +218,6 @@ public:
     if (node->left_child) {
       find_terminal_nodes_(node->left_child, range);
       find_terminal_nodes_(node->right_child, range);
-    } else if (node->down_child) {
-      find_terminal_nodes_(node->down_child, range);
-      find_terminal_nodes_(node->up_child, range);
     }
   };
 
@@ -255,7 +255,7 @@ public:
 
 
     while (sampled_node->points.size() == 0) {
-      if (!sampled_node->left_child && !sampled_node->down_child) {
+      if (!sampled_node->down_child) {
         throw std::runtime_error("No children.");
       }
 
@@ -265,12 +265,6 @@ public:
           sampled_node = sampled_node->down_child;
         }  else {
           sampled_node = sampled_node->up_child;
-        }
-      } else if (sampled_node->left_child) {
-        if (dist(rng_) < sampled_node->left_child->point_count) {
-          sampled_node = sampled_node->left_child;
-        } else {
-          sampled_node = sampled_node->right_child;
         }
       }
     }
