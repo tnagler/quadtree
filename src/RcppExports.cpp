@@ -11,19 +11,6 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// test_range
-Eigen::MatrixXd test_range(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query, int depth);
-RcppExport SEXP _quadtree_test_range(SEXP pointsSEXP, SEXP querySEXP, SEXP depthSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type points(pointsSEXP);
-    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type query(querySEXP);
-    Rcpp::traits::input_parameter< int >::type depth(depthSEXP);
-    rcpp_result_gen = Rcpp::wrap(test_range(points, query, depth));
-    return rcpp_result_gen;
-END_RCPP
-}
 // test
 Eigen::MatrixXd test(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query, int depth);
 RcppExport SEXP _quadtree_test(SEXP pointsSEXP, SEXP querySEXP, SEXP depthSEXP) {
@@ -37,10 +24,51 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// test2
+Eigen::MatrixXd test2(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query, int depth);
+RcppExport SEXP _quadtree_test2(SEXP pointsSEXP, SEXP querySEXP, SEXP depthSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type points(pointsSEXP);
+    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type query(querySEXP);
+    Rcpp::traits::input_parameter< int >::type depth(depthSEXP);
+    rcpp_result_gen = Rcpp::wrap(test2(points, query, depth));
+    return rcpp_result_gen;
+END_RCPP
+}
+// test_range
+Eigen::MatrixXd test_range(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query, int depth);
+RcppExport SEXP _quadtree_test_range(SEXP pointsSEXP, SEXP querySEXP, SEXP depthSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type points(pointsSEXP);
+    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type query(querySEXP);
+    Rcpp::traits::input_parameter< int >::type depth(depthSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_range(points, query, depth));
+    return rcpp_result_gen;
+END_RCPP
+}
+// test_range2
+Eigen::MatrixXd test_range2(const Eigen::MatrixXd& points, const Eigen::MatrixXd& query, int depth);
+RcppExport SEXP _quadtree_test_range2(SEXP pointsSEXP, SEXP querySEXP, SEXP depthSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type points(pointsSEXP);
+    Rcpp::traits::input_parameter< const Eigen::MatrixXd& >::type query(querySEXP);
+    Rcpp::traits::input_parameter< int >::type depth(depthSEXP);
+    rcpp_result_gen = Rcpp::wrap(test_range2(points, query, depth));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_quadtree_test_range", (DL_FUNC) &_quadtree_test_range, 3},
     {"_quadtree_test", (DL_FUNC) &_quadtree_test, 3},
+    {"_quadtree_test2", (DL_FUNC) &_quadtree_test2, 3},
+    {"_quadtree_test_range", (DL_FUNC) &_quadtree_test_range, 3},
+    {"_quadtree_test_range2", (DL_FUNC) &_quadtree_test_range2, 3},
     {NULL, NULL, 0}
 };
 
